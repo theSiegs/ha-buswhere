@@ -3,10 +3,24 @@
     "step": {
       "user": {
         "title": "BusWhere Shuttle Tracker",
-        "description": "Enter the BusWhere route URL from your browser.\n\nExample: https://buswhere.com/theory/routes/theory_shuttle",
+        "description": "Enter the BusWhere route URL from your browser.\n\nExample: https://buswhere.com/theory/routes/theory_shuttle\n\nPublic shuttle routes need nothing else. For a school route behind a parent login, also enter your login email and the name of a key in secrets.yaml that holds your password.",
         "data": {
           "route_url": "Route URL",
-          "scan_interval": "Update interval (seconds)"
+          "scan_interval": "Update interval (seconds)",
+          "username": "Login email (optional)",
+          "password_secret": "secrets.yaml key for the password (optional)"
+        },
+        "data_description": {
+          "username": "The email you use to sign in at buswhere.com. Leave blank for public routes.",
+          "password_secret": "Add a line like 'buswhere_password: your-password' to secrets.yaml, then put the key name (buswhere_password) here. The password itself is never stored by this integration."
+        }
+      },
+      "reauth_confirm": {
+        "title": "BusWhere sign-in needed",
+        "description": "BusWhere rejected the saved sign-in for this route. Confirm your login email and the secrets.yaml key holding your password (update the password in secrets.yaml first if it changed).",
+        "data": {
+          "username": "Login email",
+          "password_secret": "secrets.yaml key for the password"
         }
       },
       "stops": {
@@ -17,10 +31,14 @@
     "error": {
       "invalid_url": "Invalid URL format. Expected: https://buswhere.com/{org}/routes/{route_id}",
       "cannot_connect": "Could not connect to BusWhere. Check the URL and try again.",
-      "no_data": "No shuttle data found at this URL."
+      "no_data": "No shuttle data found at this URL.",
+      "secret_required": "A login email was given, so a secrets.yaml key for the password is required.",
+      "invalid_auth": "BusWhere rejected the email/password. Check the email and the value stored in secrets.yaml.",
+      "missing_secret": "Could not read that key from secrets.yaml. Check the key name and that secrets.yaml contains it."
     },
     "abort": {
-      "already_configured": "This route is already configured."
+      "already_configured": "This route is already configured.",
+      "reauth_successful": "BusWhere sign-in updated."
     }
   },
   "options": {

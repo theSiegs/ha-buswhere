@@ -10,11 +10,14 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
+from .auth import BusWhereAuth
 from .const import (
     CONF_ORG,
+    CONF_PASSWORD_SECRET,
     CONF_ROUTE_ID,
     CONF_SCAN_INTERVAL,
     CONF_STOP_NAMES,
+    CONF_USERNAME,
     CONF_ZONE_RADIUS,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_ZONE_RADIUS,
@@ -38,7 +41,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     route_id = entry.data[CONF_ROUTE_ID]
     scan_interval = entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
 
-    coordinator = BusWhereCoordinator(hass, org, route_id, scan_interval)
+    # Optional authentication: public shuttle routes need none; a school route
+    # behind a parent login carries a username + a reference to a secrets.yaml
+    # key holding the password.
+    auth: BusWhereAuth | None = None
+    username = entry.data.get(CONF_USERNAME)
+    if username:
+        auth = BusWhereAuth(hass, username, entry.data.get(CONF_PASSWORD_SECRET))
+
+    coordinator = BusWhereCoordinator(hass, org, route_id, scan_interval, auth=auth)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}
@@ -60,7 +71,9 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+        data = hass.data[DOMAIN].pop(entry.entry_id, None)
+        if data and (coordinator := data.get("coordinator")):
+            await coordinator.async_shutdown()
     return unload_ok
 
 

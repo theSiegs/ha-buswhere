@@ -46,6 +46,34 @@ Track university shuttle buses from [BusWhere](https://buswhere.com) in Home Ass
 3. Select your shuttle route
 4. Copy the URL from your browser — it should look like: `https://buswhere.com/{org}/routes/{route_id}`
 
+## Authentication (routes behind a parent login)
+
+Public shuttle routes need no sign-in. Some school routes are only visible once
+you log in as a parent at `buswhere.com`. For those, the integration can sign in
+for you and poll the route with your session.
+
+Your password is **never** stored by the integration or in the config entry.
+Instead you store it in Home Assistant's `secrets.yaml` and tell the integration
+which key to read:
+
+1. Add a line to `config/secrets.yaml`:
+
+   ```yaml
+   buswhere_password: your-buswhere-password
+   ```
+
+2. When adding the integration, fill in the optional fields:
+   - **Login email** — the email you use at `buswhere.com`
+   - **secrets.yaml key for the password** — `buswhere_password` (the key name, not the password)
+
+The integration logs in through the BusWhere web form, keeps the resulting
+session cookie in memory, and re-authenticates automatically if it expires. If
+the saved sign-in stops working (for example after a password change), Home
+Assistant raises a **Reconfigure/Reauth** prompt — update `secrets.yaml` first,
+then confirm the email and key name.
+
+> Leave both fields blank for public routes — behaviour is unchanged.
+
 ## Entities
 
 Once configured, the integration creates a device with these entities:
