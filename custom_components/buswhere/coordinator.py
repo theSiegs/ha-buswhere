@@ -36,6 +36,7 @@ class BusWhereCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         route_id: str,
         scan_interval: int = DEFAULT_SCAN_INTERVAL,
         auth: BusWhereAuth | None = None,
+        route_path: str | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -46,7 +47,11 @@ class BusWhereCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.org = org
         self.route_id = route_id
-        self._url = f"{BASE_URL}/{org}/routes/{route_id}"
+        # Prefer the stored route path; fall back to the public /routes/ style.
+        if route_path:
+            self._url = f"{BASE_URL}{route_path}"
+        else:
+            self._url = f"{BASE_URL}/{org}/routes/{route_id}"
         self._auth = auth
         self._logged_in = False
         self._full_data: dict[str, Any] | None = None
@@ -78,25 +83,18 @@ class BusWhereCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._logged_in = True
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from BusWhere."""
+        """Fetch data from BusWhere by parsing the route page's Maps.data.
+
+        Both public and school routes embed a Maps.data object in the page
+        HTML, so a full fetch each cycle is simplest and avoids depending on a
+        separate JSON poll endpoint that differs between route styles.
+        """
         if self._auth is not None and not self._logged_in:
             await self._async_login()
 
-        now = time.monotonic()
-        needs_full = (
-            self._full_data is None
-            or (now - self._last_full_fetch) >= FULL_REFRESH_INTERVAL
-        )
-
         try:
-            if needs_full:
-                data = await self._fetch_full()
-                self._full_data = data
-                self._last_full_fetch = now
-            else:
-                poll = await self._fetch_poll()
-                data = {**self._full_data, **poll}
-                self._full_data = data
+            data = await self._fetch_full()
+            self._full_data = data
         except aiohttp.ClientError as err:
             raise UpdateFailed(f"Error communicating with BusWhere: {err}") from err
         except (json.JSONDecodeError, ValueError) as err:

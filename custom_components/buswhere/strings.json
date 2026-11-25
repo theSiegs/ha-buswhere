@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "BusWhere Shuttle Tracker",
-        "description": "Enter the BusWhere route URL from your browser.\n\nExample: https://buswhere.com/theory/routes/theory_shuttle\n\nPublic shuttle routes need nothing else. For a school route behind a parent login, also enter your login email and the name of a key in secrets.yaml that holds your password.",
+        "description": "Enter the route URL from your browser's address bar.\n\nSchool route (parent login): https://buswhere.com/map/12345\nPublic shuttle: https://buswhere.com/theory/routes/theory_shuttle\n\nFor a school route, also enter your buswhere login email and the name of a key in secrets.yaml that holds your password.",
         "data": {
           "route_url": "Route URL",
           "scan_interval": "Update interval (seconds)",

@@ -27,6 +27,7 @@ from .const import (
     CONF_ORG,
     CONF_PASSWORD_SECRET,
     CONF_ROUTE_ID,
+    CONF_ROUTE_PATH,
     CONF_ROUTE_URL,
     CONF_SCAN_INTERVAL,
     CONF_STOP_NAMES,
@@ -43,9 +44,27 @@ from .coordinator import BusWhereCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-URL_PATTERN = re.compile(
-    r"https?://buswhere\.com/([^/]+)/routes/([^/?#]+)"
-)
+# School routes (behind a parent login): https://buswhere.com/map/12345
+SCHOOL_URL_PATTERN = re.compile(r"https?://buswhere\.com/map/([^/?#]+)")
+# Public shuttle routes: https://buswhere.com/{org}/routes/{route_id}
+PUBLIC_URL_PATTERN = re.compile(r"https?://buswhere\.com/([^/]+)/routes/([^/?#]+)")
+
+
+def _parse_route_url(url: str) -> tuple[str, str, str] | None:
+    """Return (org, route_id, route_path) for a BusWhere route URL, or None.
+
+    School map URLs have no org in the path, so org is set to the label "map"
+    only to key the entities; the fetched path is what matters.
+    """
+    school = SCHOOL_URL_PATTERN.match(url)
+    if school:
+        route_id = school.group(1)
+        return "map", route_id, f"/map/{route_id}"
+    public = PUBLIC_URL_PATTERN.match(url)
+    if public:
+        org, route_id = public.group(1), public.group(2)
+        return org, route_id, f"/{org}/routes/{route_id}"
+    return None
 
 
 class BusWhereConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -58,6 +77,7 @@ class BusWhereConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         super().__init__()
         self._org: str = ""
         self._route_id: str = ""
+        self._route_path: str = ""
         self._scan_interval: int = DEFAULT_SCAN_INTERVAL
         self._username: str = ""
         self._password_secret: str = ""
@@ -74,26 +94,26 @@ class BusWhereConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             url = user_input[CONF_ROUTE_URL].strip().rstrip("/")
             username = user_input.get(CONF_USERNAME, "").strip()
             password_secret = user_input.get(CONF_PASSWORD_SECRET, "").strip()
-            match = URL_PATTERN.match(url)
-            if not match:
+            parsed = _parse_route_url(url)
+            if parsed is None:
                 errors["base"] = "invalid_url"
             elif username and not password_secret:
                 errors["base"] = "secret_required"
             else:
-                org = match.group(1)
-                route_id = match.group(2)
+                org, route_id, route_path = parsed
 
                 await self.async_set_unique_id(f"{org}_{route_id}")
                 self._abort_if_unique_id_configured()
 
                 stops, error = await self._async_validate(
-                    org, route_id, username, password_secret
+                    route_path, username, password_secret
                 )
                 if error:
                     errors["base"] = error
                 else:
                     self._org = org
                     self._route_id = route_id
+                    self._route_path = route_path
                     self._username = username
                     self._password_secret = password_secret
                     self._scan_interval = int(
@@ -169,6 +189,7 @@ class BusWhereConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data: dict[str, Any] = {
             CONF_ORG: self._org,
             CONF_ROUTE_ID: self._route_id,
+            CONF_ROUTE_PATH: self._route_path,
             CONF_SCAN_INTERVAL: self._scan_interval,
         }
         if self._username:
@@ -182,8 +203,7 @@ class BusWhereConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _async_validate(
         self,
-        org: str,
-        route_id: str,
+        route_path: str,
         username: str,
         password_secret: str,
     ) -> tuple[list[dict[str, Any]] | None, str | None]:
@@ -206,7 +226,7 @@ class BusWhereConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except CannotConnect:
                     return None, "cannot_connect"
 
-            url = f"{BASE_URL}/{org}/routes/{route_id}"
+            url = f"{BASE_URL}{route_path}"
             try:
                 async with session.get(
                     url, headers={"User-Agent": USER_AGENT}
@@ -239,6 +259,9 @@ class BusWhereConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         self._org = entry_data[CONF_ORG]
         self._route_id = entry_data[CONF_ROUTE_ID]
+        self._route_path = entry_data.get(
+            CONF_ROUTE_PATH, f"/{self._org}/routes/{self._route_id}"
+        )
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -252,7 +275,7 @@ class BusWhereConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             username = user_input[CONF_USERNAME].strip()
             password_secret = user_input[CONF_PASSWORD_SECRET].strip()
             _, error = await self._async_validate(
-                self._org, self._route_id, username, password_secret
+                self._route_path, username, password_secret
             )
             if error:
                 errors["base"] = error

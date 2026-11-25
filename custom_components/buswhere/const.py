@@ -5,6 +5,11 @@ DOMAIN = "buswhere"
 CONF_ROUTE_URL = "route_url"
 CONF_ORG = "org"
 CONF_ROUTE_ID = "route_id"
+# The path after the host for this route's page, e.g. "/map/12345" (school,
+# behind a parent login) or "/theory/routes/theory_shuttle" (public shuttle).
+# The coordinator fetches BASE_URL + this path and parses the embedded
+# Maps.data. Stored so both URL styles are supported without an org in the path.
+CONF_ROUTE_PATH = "route_path"
 CONF_SCAN_INTERVAL = "scan_interval"
 
 CONF_STOP_NAMES = "stop_names"
