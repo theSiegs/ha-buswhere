@@ -51,19 +51,32 @@ class BusWhereTracker(CoordinatorEntity[BusWhereCoordinator], TrackerEntity):
         """Return the source type."""
         return SourceType.GPS
 
+    def _bus_position(self) -> dict[str, Any] | None:
+        """Return the bus position dict, from 'current' (public) or 'devices' (school)."""
+        data = self.coordinator.data or {}
+        cur = data.get("current")
+        if isinstance(cur, dict) and (
+            cur.get("lat") is not None or cur.get("latitude") is not None
+        ):
+            return cur
+        devices = data.get("devices")
+        if isinstance(devices, list) and devices and isinstance(devices[0], dict):
+            dev = devices[0]
+            if dev.get("lat") is not None or dev.get("latitude") is not None:
+                return dev
+        return None
+
     @property
     def latitude(self) -> float | None:
         """Return latitude."""
-        if self.coordinator.data and self.coordinator.data.get("current"):
-            return self.coordinator.data["current"].get("lat")
-        return None
+        pos = self._bus_position()
+        return pos.get("lat", pos.get("latitude")) if pos else None
 
     @property
     def longitude(self) -> float | None:
         """Return longitude."""
-        if self.coordinator.data and self.coordinator.data.get("current"):
-            return self.coordinator.data["current"].get("lon")
-        return None
+        pos = self._bus_position()
+        return pos.get("lon", pos.get("longitude")) if pos else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

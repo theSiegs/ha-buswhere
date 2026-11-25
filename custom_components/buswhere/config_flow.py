@@ -1,6 +1,7 @@
 """Config flow for BusWhere integration."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
@@ -59,7 +60,9 @@ def _parse_route_url(url: str) -> tuple[str, str, str] | None:
     school = SCHOOL_URL_PATTERN.match(url)
     if school:
         route_id = school.group(1)
-        return "map", route_id, f"/map/{route_id}"
+        # The /map/{id} page is an Ember SPA; its data is the JSON document
+        # the app loads. Fetch that directly.
+        return "map", route_id, f"/routes/{route_id}.json"
     public = PUBLIC_URL_PATTERN.match(url)
     if public:
         org, route_id = public.group(1), public.group(2)
@@ -211,9 +214,9 @@ class BusWhereConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         Returns (stops, None) on success or (None, error_key) on failure.
         """
-        session = async_create_clientsession(
-            self.hass, auto_cleanup=False, cookie_jar=aiohttp.CookieJar()
-        )
+        is_json = route_path.endswith(".json")
+        session = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar())
+        auth: BusWhereAuth | None = None
         try:
             if username:
                 auth = BusWhereAuth(self.hass, username, password_secret)
@@ -226,24 +229,37 @@ class BusWhereConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except CannotConnect:
                     return None, "cannot_connect"
 
+            headers = {"User-Agent": USER_AGENT}
+            if is_json:
+                headers["Accept"] = "application/json"
+            if auth is not None:
+                auth.apply_headers(headers)
+
             url = f"{BASE_URL}{route_path}"
             try:
-                async with session.get(
-                    url, headers={"User-Agent": USER_AGENT}
-                ) as resp:
+                async with session.get(url, headers=headers) as resp:
                     if resp.status != 200:
                         return None, "cannot_connect"
-                    html = await resp.text()
+                    text = await resp.text()
             except aiohttp.ClientError:
                 _LOGGER.debug("BusWhere route fetch failed during setup", exc_info=True)
                 return None, "cannot_connect"
 
-            if "Maps.data" not in html:
-                # Still seeing a non-route page: almost certainly not authorised.
-                return None, "invalid_auth" if username else "cannot_connect"
+            if is_json:
+                try:
+                    data = json.loads(text)
+                except (json.JSONDecodeError, ValueError):
+                    # Got the app shell instead of JSON → not authorised.
+                    return None, "invalid_auth" if username else "cannot_connect"
+                if not isinstance(data, dict) or "stops" not in data:
+                    return None, "invalid_auth" if username else "no_data"
+                return data.get("stops", []), None
 
+            if "Maps.data" not in text:
+                # A non-route page: almost certainly not authorised.
+                return None, "invalid_auth" if username else "cannot_connect"
             try:
-                data = BusWhereCoordinator._parse_maps_data(html)
+                data = BusWhereCoordinator._parse_maps_data(text)
             except ValueError:
                 return None, "no_data"
             return data.get("stops", []), None

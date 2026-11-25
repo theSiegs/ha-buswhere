@@ -107,12 +107,40 @@ class BusWhereCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return status in (401, 403) or LOGIN_FORM_MARKER in text
 
     async def _fetch_full(self) -> dict[str, Any]:
-        """Fetch the full HTML page and parse Maps.data for complete route info."""
+        """Fetch the route data.
+
+        School routes serve a JSON document at /routes/{id}.json; public
+        shuttle pages embed a Maps.data object in their HTML. Both yield the
+        same shape (stops with per-stop eta, active, stop_eta, devices, ...).
+        """
+        is_json = self._url.endswith(".json")
         headers = {"User-Agent": USER_AGENT}
-        status, html = await self._get(self._url, headers=headers)
+        if is_json:
+            headers["Accept"] = "application/json"
+
+        status, text = await self._get(self._url, headers=headers)
         if status != 200:
             raise UpdateFailed(f"BusWhere returned HTTP {status}")
-        return self._parse_maps_data(html)
+
+        if not is_json:
+            return self._parse_maps_data(text)
+
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            # Not JSON — session likely expired and we got the app shell.
+            if self._auth is None:
+                raise UpdateFailed("BusWhere returned non-JSON route data")
+            _LOGGER.debug("BusWhere route data not JSON; re-authenticating")
+            self._logged_in = False
+            await self._async_login()
+            status, text = await self._get(self._url, headers=headers)
+            try:
+                return json.loads(text)
+            except (json.JSONDecodeError, ValueError) as err:
+                raise ConfigEntryAuthFailed(
+                    "BusWhere returned non-JSON route data after re-auth"
+                ) from err
 
     async def _fetch_poll(self) -> dict[str, Any]:
         """Fetch the lightweight JSON polling endpoint."""
@@ -142,6 +170,8 @@ class BusWhereCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         When no auth is configured (public routes), this is a plain GET.
         """
+        if self._auth is not None:
+            self._auth.apply_headers(headers)
         async with self._session.get(url, params=params, headers=headers) as resp:
             status = resp.status
             text = await resp.text()

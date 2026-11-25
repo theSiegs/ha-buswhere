@@ -44,6 +44,12 @@ FALLBACK_LOGIN_ACTION = "/sessions"
 # The Rails session cookie set on a successful login.
 SESSION_COOKIE = "_buswhere_session"
 
+# Mobile API session endpoint, used as a fallback if the web form login does
+# not establish a session.
+API_SESSIONS_PATH = "/api/v1/sessions"
+# Response JSON keys that may carry a bearer token, searched in order.
+TOKEN_KEYS = ("token", "auth_token", "api_token", "access_token", "jwt")
+
 # Home Assistant secrets file (read for the referenced password key).
 SECRETS_FILE = "secrets.yaml"
 

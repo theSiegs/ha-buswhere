@@ -15,17 +15,20 @@ from __future__ import annotations
 import html
 import logging
 import re
+from typing import Any
 
 import aiohttp
 
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    API_SESSIONS_PATH,
     BASE_URL,
     FALLBACK_LOGIN_ACTION,
     LOGIN_PAGE_PATH,
     SECRETS_FILE,
     SESSION_COOKIE,
+    TOKEN_KEYS,
     USER_AGENT,
 )
 
@@ -112,6 +115,30 @@ def _parse_login_form(page: str) -> tuple[str, dict[str, str]]:
     return action, fields
 
 
+def _has_session_cookie(session: aiohttp.ClientSession) -> bool:
+    """True if the session jar holds a BusWhere session cookie."""
+    return any(cookie.key == SESSION_COOKIE for cookie in session.cookie_jar)
+
+
+def _find_token(payload: Any) -> str | None:
+    """Recursively search a JSON payload for a token-ish string value."""
+    if isinstance(payload, dict):
+        for key in TOKEN_KEYS:
+            val = payload.get(key)
+            if isinstance(val, str) and val:
+                return val
+        for val in payload.values():
+            found = _find_token(val)
+            if found:
+                return found
+    elif isinstance(payload, list):
+        for item in payload:
+            found = _find_token(item)
+            if found:
+                return found
+    return None
+
+
 class BusWhereAuth:
     """Logs a persistent aiohttp session into BusWhere and keeps it logged in.
 
@@ -127,68 +154,137 @@ class BusWhereAuth:
         self._hass = hass
         self._username = username
         self._password_secret = password_secret
+        self._token: str | None = None
 
     @property
     def username(self) -> str:
         return self._username
 
+    def apply_headers(self, headers: dict[str, str]) -> dict[str, str]:
+        """Add a bearer token header if the API login returned one."""
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        return headers
+
     async def async_login(self, session: aiohttp.ClientSession) -> None:
         """Log in, populating the session's cookie jar.
 
-        Raises MissingSecret, InvalidAuth or CannotConnect.
+        Tries the web sign-in form first (the way the site's data-remote form
+        submits over AJAX), then the mobile API as a fallback. Raises
+        MissingSecret, InvalidAuth or CannotConnect.
         """
         password = await async_read_secret(self._hass, self._password_secret)
 
-        # 1) GET the login page for a fresh CSRF token + session cookie.
+        if await self._try_web_form(session, password):
+            return
+        if await self._try_api(session, password):
+            return
+        raise InvalidAuth(
+            "BusWhere rejected the sign-in (web form and mobile API both failed)"
+        )
+
+    async def _try_web_form(
+        self, session: aiohttp.ClientSession, password: str
+    ) -> bool:
+        """Submit the web sign-in form the way its data-remote form does."""
         try:
             async with session.get(
                 f"{BASE_URL}{LOGIN_PAGE_PATH}",
                 headers={"User-Agent": USER_AGENT},
             ) as resp:
                 page = await resp.text()
+                get_status = resp.status
         except aiohttp.ClientError as err:
             raise CannotConnect(f"Could not load BusWhere login page: {err}") from err
 
-        action, fields = _parse_login_form(page)
+        try:
+            action, fields = _parse_login_form(page)
+        except InvalidAuth:
+            _LOGGER.debug(
+                "buswhere: no login form at %s (GET status %s) — skipping web form",
+                LOGIN_PAGE_PATH,
+                get_status,
+            )
+            return False
+
         fields["email"] = self._username
         fields["password"] = password
 
-        post_headers = {
+        headers = {
             "User-Agent": USER_AGENT,
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            # data-remote form (Rails UJS): submits over AJAX, answered as JS.
+            "Accept": "text/javascript, text/html, application/xml, text/xml, */*",
+            "X-Requested-With": "XMLHttpRequest",
             "Referer": f"{BASE_URL}{LOGIN_PAGE_PATH}",
         }
         csrf = _CSRF_META_RE.search(page)
         if csrf:
-            post_headers["X-CSRF-Token"] = html.unescape(csrf.group(1))
+            headers["X-CSRF-Token"] = html.unescape(csrf.group(1))
 
         post_url = action if action.startswith("http") else f"{BASE_URL}{action}"
-
-        # 2) POST the credentials. Success is a redirect / a page without the
-        #    login form; failure re-renders the login form.
         try:
             async with session.post(
-                post_url,
-                data=fields,
-                headers=post_headers,
-                allow_redirects=True,
+                post_url, data=fields, headers=headers, allow_redirects=True
             ) as resp:
                 status = resp.status
                 text = await resp.text()
         except aiohttp.ClientError as err:
             raise CannotConnect(f"Could not submit BusWhere login: {err}") from err
 
-        if status in (401, 403, 422) or LOGIN_FORM_MARKER in text:
-            raise InvalidAuth("BusWhere rejected the email/password")
+        has_cookie = _has_session_cookie(session)
+        form_back = LOGIN_FORM_MARKER in text
+        _LOGGER.debug(
+            "buswhere web-form login: POST %s -> %s (cookie=%s, login_form_in_response=%s, body=%dB)",
+            post_url,
+            status,
+            has_cookie,
+            form_back,
+            len(text),
+        )
         if status >= 500:
             raise CannotConnect(f"BusWhere returned HTTP {status} during login")
+        if status in (401, 403, 422) or form_back:
+            return False
+        return has_cookie
 
-        has_cookie = any(
-            cookie.key == SESSION_COOKIE for cookie in session.cookie_jar
-        )
-        if not has_cookie:
-            # No session cookie means the login did not take, even if the body
-            # looked benign.
-            raise InvalidAuth("BusWhere did not establish a session")
-        _LOGGER.debug("BusWhere login succeeded for %s", self._username)
+    async def _try_api(
+        self, session: aiohttp.ClientSession, password: str
+    ) -> bool:
+        """Fallback: the mobile API session endpoint (JSON)."""
+        url = f"{BASE_URL}{API_SESSIONS_PATH}"
+        creds = {"email": self._username, "password": password}
+        for body, label in ((creds, "flat"), ({"session": creds}, "session")):
+            try:
+                async with session.post(
+                    url,
+                    json=body,
+                    headers={
+                        "User-Agent": USER_AGENT,
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                    },
+                ) as resp:
+                    status = resp.status
+                    try:
+                        payload = await resp.json(content_type=None)
+                    except (aiohttp.ContentTypeError, ValueError):
+                        payload = None
+            except aiohttp.ClientError as err:
+                raise CannotConnect(f"Could not reach BusWhere API: {err}") from err
+
+            has_cookie = _has_session_cookie(session)
+            token = _find_token(payload)
+            _LOGGER.debug(
+                "buswhere api login: POST %s (%s) -> %s (cookie=%s, token=%s)",
+                API_SESSIONS_PATH,
+                label,
+                status,
+                has_cookie,
+                bool(token),
+            )
+            if status in (200, 201) and (has_cookie or token):
+                if token:
+                    self._token = token
+                return True
+        return False
