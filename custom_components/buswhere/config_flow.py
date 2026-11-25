@@ -23,6 +23,7 @@ from homeassistant.helpers.selector import (
 from .auth import BusWhereAuth, CannotConnect, InvalidAuth, MissingSecret
 from .const import (
     BASE_URL,
+    CONF_CREATE_STOP_ZONES,
     CONF_ORG,
     CONF_PASSWORD_SECRET,
     CONF_ROUTE_ID,
@@ -31,6 +32,7 @@ from .const import (
     CONF_STOP_NAMES,
     CONF_USERNAME,
     CONF_ZONE_RADIUS,
+    DEFAULT_CREATE_STOP_ZONES,
     DEFAULT_PASSWORD_SECRET,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_ZONE_RADIUS,
@@ -323,6 +325,11 @@ class BusWhereOptionsFlow(config_entries.OptionsFlow):
                 data={
                     CONF_STOP_NAMES: stop_names,
                     CONF_ZONE_RADIUS: zone_radius,
+                    CONF_CREATE_STOP_ZONES: bool(
+                        user_input.get(
+                            CONF_CREATE_STOP_ZONES, DEFAULT_CREATE_STOP_ZONES
+                        )
+                    ),
                 },
             )
 
@@ -339,8 +346,18 @@ class BusWhereOptionsFlow(config_entries.OptionsFlow):
         current_radius = self._config_entry.options.get(
             CONF_ZONE_RADIUS, DEFAULT_ZONE_RADIUS
         )
+        current_create_zones = self._config_entry.options.get(
+            CONF_CREATE_STOP_ZONES, DEFAULT_CREATE_STOP_ZONES
+        )
 
         schema_dict: dict[Any, Any] = {}
+
+        schema_dict[
+            vol.Optional(
+                CONF_CREATE_STOP_ZONES,
+                default=current_create_zones,
+            )
+        ] = bool
 
         schema_dict[
             vol.Optional(

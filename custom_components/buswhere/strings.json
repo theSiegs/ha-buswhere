@@ -45,8 +45,9 @@
     "step": {
       "init": {
         "title": "BusWhere Settings",
-        "description": "Configure zone radius and stop names.\n\n{stop_info}",
+        "description": "Stop map-zones are off by default (they would affect presence detection). Turn them on only if you want each stop shown as a place on the map; they are created as passive zones.\n\n{stop_info}",
         "data": {
+          "create_stop_zones": "Create a map zone for each stop",
           "zone_radius": "Stop zone radius (meters)"
         }
       }

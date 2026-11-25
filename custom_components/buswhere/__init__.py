@@ -12,6 +12,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .auth import BusWhereAuth
 from .const import (
+    CONF_CREATE_STOP_ZONES,
     CONF_ORG,
     CONF_PASSWORD_SECRET,
     CONF_ROUTE_ID,
@@ -19,6 +20,7 @@ from .const import (
     CONF_STOP_NAMES,
     CONF_USERNAME,
     CONF_ZONE_RADIUS,
+    DEFAULT_CREATE_STOP_ZONES,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_ZONE_RADIUS,
     DOMAIN,
@@ -54,7 +56,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}
 
-    await _create_stop_zones(hass, entry, coordinator)
+    # Stop zones are opt-in: off by default so the ETA sensors work without
+    # creating active map zones that would affect presence detection.
+    if entry.options.get(CONF_CREATE_STOP_ZONES, DEFAULT_CREATE_STOP_ZONES):
+        await _create_stop_zones(hass, entry, coordinator)
+    else:
+        # Clean up any stop zones left from a previous run with zones enabled.
+        await _remove_route_zones(hass, entry.data[CONF_ROUTE_ID])
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -135,7 +143,9 @@ async def _create_stop_zones(
             "longitude": stop["lon"],
             "radius": float(zone_radius),
             "icon": "mdi:bus-stop",
-            "passive": False,
+            # Passive: show the stop on the map but keep it out of presence
+            # detection, so a nearby stop can't flip a phone's zone.
+            "passive": True,
         }
         desired[slug_name] = (zone_data, display_name)
 

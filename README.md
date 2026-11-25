@@ -85,7 +85,7 @@ Once configured, the integration creates a device with these entities:
 | `binary_sensor.buswhere_{route}_active` | Binary Sensor | Whether the bus is currently active |
 | `sensor.buswhere_{route}_stop_{N}_eta` | Sensor | ETA in minutes to each stop |
 
-Additionally, **zones** are created for each stop on the route so they appear as named locations on your map.
+Optionally, a **zone** can be created for each stop so they appear as named locations on your map. This is **off by default** — active stop zones feed Home Assistant's presence detection, so a stop near your home could flip a family member's phone to "at [stop]". Turn it on under the integration's **Configure** options if you want it; zones are then created as *passive* (shown on the map but excluded from presence). The ETA sensors work either way.
 
 ## Renaming Stops
 

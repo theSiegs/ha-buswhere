@@ -9,6 +9,11 @@ CONF_SCAN_INTERVAL = "scan_interval"
 
 CONF_STOP_NAMES = "stop_names"
 CONF_ZONE_RADIUS = "zone_radius"
+# Whether to create a map zone per stop. Off by default: active stop zones
+# feed HA presence and can flip a phone to "at <stop>" near home, which is
+# usually unwanted. ETA sensors do not need zones.
+CONF_CREATE_STOP_ZONES = "create_stop_zones"
+DEFAULT_CREATE_STOP_ZONES = False
 
 # Authentication (optional — public shuttle routes need none; school routes
 # that sit behind a parent login do).
